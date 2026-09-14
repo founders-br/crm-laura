@@ -16,7 +16,12 @@ ENV APP_VERSION=$APP_VERSION
 RUN corepack enable && corepack prepare pnpm@9.15.9 --activate
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+# O worker executa TypeScript via `tsx`, que fica em devDependencies. Ambientes de
+# deploy como o Coolify podem construir com NODE_ENV=production; nesse caso o
+# pnpm omite devDependencies por padrão e o container entra em restart loop com
+# "Command tsx not found". Forçamos devDependencies nesta imagem porque `tsx` é
+# uma dependência de runtime do worker enquanto ele roda TS diretamente.
+RUN pnpm install --frozen-lockfile --prod=false
 
 COPY . .
 
