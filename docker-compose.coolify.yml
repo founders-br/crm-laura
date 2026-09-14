@@ -34,8 +34,9 @@ services:
 
   worker:
     mem_limit: 512m
-    image: ${WORKER_IMAGE:-ghcr.io/founders-br/deskcomm-worker:stable}
-    pull_policy: ${WORKER_PULL_POLICY:-always}
+    # A imagem publicada v1.0.1 está sem o binário `tsx`, embora o Dockerfile da
+    # própria release instale as devDependencies que o worker exige. No Coolify,
+    # construa o worker a partir do mesmo commit/tag em vez de puxar esse artefato.
     build:
       context: .
       dockerfile: Dockerfile.worker
