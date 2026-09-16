@@ -1,0 +1,22 @@
+:80 {
+	encode gzip
+
+	route {
+		# Mantém o webhook global do WAHA inacessível pela internet.
+		@waha_global path /api/v1/webhooks/waha
+		respond @waha_global 403
+
+		# O runner de agente pode levar vários minutos; mantenha os timeouts
+		# equivalentes ao Caddyfile de produção atual.
+		@agentrun path /api/internal/agents/run*
+		reverse_proxy @agentrun app:3000 {
+			transport http {
+				read_timeout 320s
+				write_timeout 320s
+			}
+		}
+
+		# Todo o restante do tráfego vai para o Next.js.
+		reverse_proxy app:3000
+	}
+}
