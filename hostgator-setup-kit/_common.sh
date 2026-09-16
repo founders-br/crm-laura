@@ -227,9 +227,40 @@ paint() { local code="$1"; shift; if [ "$COLOR" = 1 ]; then printf '\033[%sm%s\0
 c_red() { paint 31 "$*"; }
 c_grn() { paint 32 "$*"; }
 c_ylw() { paint 33 "$*"; }
-c_dim() { paint 2  "$*"; }
+c_dim() { paint 2 "$*"; }
 die()   { c_red "✖ $*"; exit 1; }
 step()  { printf '\n'; paint 1 "▶ $*"; }
+
+# O install.sh define uma recuperação genérica antes de saber em qual projeto
+# está. A partir daqui o projeto já foi localizado e esta definição substitui a
+# anterior: falha tardia nunca deve ensinar o operador a apagar uma instalação
+# que pode já estar configurada — ou até saudável, como aconteceu quando o cron
+# falhou depois de app, worker e scheduler já terem subido.
+show_recovery() {
+  local dir="${PROJECT_DIR:-$PWD}"
+  c_red ""
+  c_red "═══════════════════════════════════════════════════════"
+  c_red " A instalação parou. O estado existente foi preservado."
+  c_red "═══════════════════════════════════════════════════════"
+
+  if [ "${APP_SAUDAVEL:-0}" = 1 ]; then
+    printf '\n%s\n' "O app já estava saudável quando uma etapa posterior falhou."
+    printf '%s\n' "Não derrube a stack nem limpe o banco: corrija a etapa e reexecute."
+  elif [ -f "$dir/.env" ]; then
+    printf '\n%s\n' "A configuração já está salva em ${dir}/.env."
+    printf '%s\n' "Preserve o .env, os volumes e o banco; corrija a causa e reexecute."
+  else
+    printf '\n%s\n' "O projeto já foi localizado, mas a configuração final ainda não foi gravada."
+    printf '%s\n' "Corrija a causa e reexecute; não é necessário limpar banco ou volumes."
+  fi
+
+  printf '\n  %s\n' "cd ${dir}"
+  printf '  %s\n' "bash ${KIT_DIR:-hostgator-setup-kit}/install.sh"
+  if [ "${APP_SAUDAVEL:-0}" = 1 ]; then
+    printf '  %s\n' "bash ${KIT_DIR:-hostgator-setup-kit}/healthcheck.sh"
+  fi
+  printf '\n%s\n\n' "Se precisar investigar antes, preserve o estado atual e consulte os logs dos serviços."
+}
 
 # Gêmea da de install.sh (se mexer numa, mexa na outra) — ver o comentário lá
 # para o defeito que ela fecha. Coberta por test-validators.sh.
@@ -727,13 +758,38 @@ cron_merge() {  # cron_merge <marcador> <assinatura_legada> <linha_nova>
   printf '%s\n' "$nova"
 }
 
-# `crontab -l` usa exit 1 para um estado normal: o usuário ainda não tem
-# crontab. Sob `set -euo pipefail`, deixar esse 1 entrar no pipeline faz a
-# gravação nova acontecer e, mesmo assim, mata o instalador logo depois.
-# Leitura ausente equivale a crontab vazio; falha de ESCRITA continua sendo
-# propagada pelo `crontab -` que recebe o merge.
+# Ausência do crontab é um estado normal; qualquer outro erro de leitura é
+# diferente. Engolir todo exit 1 como "vazio" pode transformar um erro de
+# permissão/spool em sobrescrita do crontab por uma única linha do CRM.
 crontab_atual() {
-  crontab -l 2>/dev/null || true
+  local err rc
+  err="$(mktemp)" || return 1
+  if crontab -l 2>"$err"; then
+    rm -f "$err"
+    return 0
+  fi
+  rc=$?
+  if [ "$rc" -eq 1 ] && grep -qi '^no crontab for ' "$err"; then
+    rm -f "$err"
+    return 0
+  fi
+  cat "$err" >&2
+  rm -f "$err"
+  return "$rc"
+}
+
+# Só começa a montar/escrever a nova tabela depois que a leitura anterior
+# terminou com sucesso. Num pipeline direto, os processos rodam em paralelo:
+# mesmo que o leitor falhe, `cron_merge` ainda pode emitir a linha nova e
+# `crontab -` sobrescrever o estado antes de pipefail devolver erro.
+cron_instalar_linha() {  # cron_instalar_linha <marcador> <assinatura_legada> <linha_nova>
+  local marcador="$1" legado="$2" nova="$3" atual
+  if ! atual="$(crontab_atual)"; then
+    return 1
+  fi
+  {
+    [ -z "$atual" ] || printf '%s\n' "$atual"
+  } | cron_merge "$marcador" "$legado" "$nova" | crontab -
 }
 
 setup_event_log_drain_cron() {
@@ -754,7 +810,7 @@ setup_event_log_drain_cron() {
   if crontab_atual | grep -qF -e "$url_drain"; then first_time=0; fi
 
   local cron_line="* * * * * curl -fsS -H \"Authorization: Bearer ${secret}\" \"${url_drain}\" >/dev/null 2>&1 ${marcador}"
-  ( crontab_atual | cron_merge "$marcador" "$url_drain" "$cron_line" ) | crontab -
+  cron_instalar_linha "$marcador" "$url_drain" "$cron_line"
   c_grn "✓ automações ativas (cron do event-log-drain, a cada minuto)"
 
   if [ "$first_time" = 1 ]; then
@@ -793,7 +849,7 @@ setup_update_agent_cron() {
   local legado="cd ${PROJECT_DIR} && bash hostgator-setup-kit/agent.sh"
   local marcador; marcador="$(cron_tag agent)"
   local cron_line="*/5 * * * * ${legado} >/dev/null 2>&1 ${marcador}"
-  ( crontab_atual | cron_merge "$marcador" "$legado" "$cron_line" ) | crontab -
+  cron_instalar_linha "$marcador" "$legado" "$cron_line"
   c_grn "✓ atualização pela tela ativa (agente a cada 5 minutos)"
 }
 
