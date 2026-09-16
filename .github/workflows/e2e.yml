@@ -13,20 +13,10 @@ name: e2e
 # limitador de login do produto é por IP (60/300s) e no CI todos os specs vêm do
 # mesmo 127.0.0.1. Ver o comentário do passo "E2E — parte 1 de 2".
 #
-# É CHECK OBRIGATÓRIO. A régua, para reconferir em vez de acreditar nesta linha:
-#   $ gh api repos/melgarafael/DeskcommCRM/branches/main/protection \
-#       --jq '.required_status_checks.contexts|join(", ")'
-#   verify, build-and-size, invariants, e2e, imagens-ok   # medido em 2026-08-14
-#
-# São CINCO. A versão anterior deste bloco colava a saída de 2026-08-12, com
-# quatro — `imagens-ok` virou obrigatório em 2026-08-13, um dia depois. Trocar
-# uma afirmação vencida por outra vencida é o mesmo defeito, e o commit
-# bcd88c30 desta branch existe justamente por causa dele: quem lê aqui para
-# saber contra o que medir concluiria que imagem quebrada não segura merge.
-# Este cabeçalho afirmou o contrário ("NÃO-BLOQUEANTE por ausência… quando N
-# execuções seguidas passarem limpas, adicionar aos obrigatórios") por tempo
-# demais depois de a promoção ter acontecido — e quem lesse isso mediria o custo
-# de uma mudança contra a régua errada.
+# Neste fork, a régua completa roda em dois momentos: no PR que promove
+# `staging` para `main` e no commit já integrado em `staging`/`main`. O nome
+# estável do check é `e2e`; é esse contexto que o ruleset das branches deve
+# exigir. O workflow sozinho NÃO impede merge quando a branch não está protegida.
 #
 # O job falha honestamente: a primeira versão usava `continue-on-error: true` no
 # job inteiro e reportou VERDE com o `supabase start` quebrado e zero teste
@@ -35,7 +25,7 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: [main]
+    branches: [main, staging]
 
 # O GITHUB_TOKEN deste job serve a `actions/checkout` (clone) e a
 # `actions/setup-node` (manifest de `actions/node-versions`, repo público).
@@ -825,14 +815,10 @@ jobs:
             test-results/
           retention-days: 7
 
-  # O NOME DESTE JOB É O CHECK OBRIGATÓRIO, e é por isso que ele existe.
-  #
-  # A branch protection da `main` exige um check chamado exatamente `e2e`
-  # (medido: verify, build-and-size, invariants, e2e, imagens-ok). Jobs de
-  # matrix se chamam `e2e-parte (1)` e `e2e-parte (2)` — se o job das partes
-  # tivesse ficado com o nome `e2e`, a proteção passaria a esperar para sempre
-  # um check que nenhum run produz, e NENHUM PR mergearia. Este agregador é o
-  # mesmo padrão do `imagens-ok` em `publish-image.yml`.
+  # Nome estável usado pelo ruleset como gate da suíte completa. Os jobs da
+  # matrix se chamam `e2e-parte (1)` e `e2e-parte (2)`; o agregador transforma
+  # o conjunto num único contexto `e2e`, que só fica verde se todas as partes
+  # realmente executarem e passarem.
   e2e:
     if: always()
     needs: [e2e-parte]
