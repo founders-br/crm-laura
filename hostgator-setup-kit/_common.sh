@@ -227,7 +227,7 @@ paint() { local code="$1"; shift; if [ "$COLOR" = 1 ]; then printf '\033[%sm%s\0
 c_red() { paint 31 "$*"; }
 c_grn() { paint 32 "$*"; }
 c_ylw() { paint 33 "$*"; }
-c_dim() { paint 2 "$*"; }
+c_dim() { paint 2  "$*"; }
 die()   { c_red "✖ $*"; exit 1; }
 step()  { printf '\n'; paint 1 "▶ $*"; }
 
@@ -767,8 +767,9 @@ crontab_atual() {
   if crontab -l 2>"$err"; then
     rm -f "$err"
     return 0
+  else
+    rc=$?
   fi
-  rc=$?
   if [ "$rc" -eq 1 ] && grep -qi '^no crontab for ' "$err"; then
     rm -f "$err"
     return 0
