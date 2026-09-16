@@ -727,6 +727,15 @@ cron_merge() {  # cron_merge <marcador> <assinatura_legada> <linha_nova>
   printf '%s\n' "$nova"
 }
 
+# `crontab -l` usa exit 1 para um estado normal: o usuário ainda não tem
+# crontab. Sob `set -euo pipefail`, deixar esse 1 entrar no pipeline faz a
+# gravação nova acontecer e, mesmo assim, mata o instalador logo depois.
+# Leitura ausente equivale a crontab vazio; falha de ESCRITA continua sendo
+# propagada pelo `crontab -` que recebe o merge.
+crontab_atual() {
+  crontab -l 2>/dev/null || true
+}
+
 setup_event_log_drain_cron() {
   command -v crontab >/dev/null 2>&1 || { c_ylw "⚠ 'crontab' não encontrado — instale o pacote 'cron' e rode de novo pra ativar as automações."; return 0; }
 
@@ -742,10 +751,10 @@ setup_event_log_drain_cron() {
   # ('existe alguma linha de event-log-drain?'), uma instalação nova numa VPS
   # que já roda outra se achava veterana e pulava a higienização de eventos.
   local first_time=1
-  if crontab -l 2>/dev/null | grep -qF -e "$url_drain"; then first_time=0; fi
+  if crontab_atual | grep -qF -e "$url_drain"; then first_time=0; fi
 
   local cron_line="* * * * * curl -fsS -H \"Authorization: Bearer ${secret}\" \"${url_drain}\" >/dev/null 2>&1 ${marcador}"
-  ( crontab -l 2>/dev/null | cron_merge "$marcador" "$url_drain" "$cron_line" ) | crontab -
+  ( crontab_atual | cron_merge "$marcador" "$url_drain" "$cron_line" ) | crontab -
   c_grn "✓ automações ativas (cron do event-log-drain, a cada minuto)"
 
   if [ "$first_time" = 1 ]; then
@@ -784,7 +793,7 @@ setup_update_agent_cron() {
   local legado="cd ${PROJECT_DIR} && bash hostgator-setup-kit/agent.sh"
   local marcador; marcador="$(cron_tag agent)"
   local cron_line="*/5 * * * * ${legado} >/dev/null 2>&1 ${marcador}"
-  ( crontab -l 2>/dev/null | cron_merge "$marcador" "$legado" "$cron_line" ) | crontab -
+  ( crontab_atual | cron_merge "$marcador" "$legado" "$cron_line" ) | crontab -
   c_grn "✓ atualização pela tela ativa (agente a cada 5 minutos)"
 }
 

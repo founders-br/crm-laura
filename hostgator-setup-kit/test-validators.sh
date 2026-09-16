@@ -2731,6 +2731,70 @@ else
   printf '  ✓ a tela de retomada avisa que o token de conta é perguntado de novo\n'
 fi
 
+echo "crontab: primeira ativação sem crontab não cai no pipefail"
+TMP_CRON_FIRST="$(mktemp -d)"
+(
+  mkdir -p "$TMP_CRON_FIRST/bin"
+  cat > "$TMP_CRON_FIRST/bin/crontab" <<'STUB'
+#!/usr/bin/env bash
+: "${CRONTAB_SANDBOX:?sandbox ausente}"
+grava() { cat > "${CRONTAB_SANDBOX}.novo" && mv "${CRONTAB_SANDBOX}.novo" "$CRONTAB_SANDBOX"; }
+case "${1:-}" in
+  -l) [ -f "$CRONTAB_SANDBOX" ] || { printf 'no crontab for teste\n' >&2; exit 1; }
+      cat "$CRONTAB_SANDBOX" ;;
+  -)  [ "${CRONTAB_FAIL_WRITE:-0}" = 1 ] && exit 7
+      grava ;;
+  *)  exit 2 ;;
+esac
+STUB
+  chmod +x "$TMP_CRON_FIRST/bin/crontab"
+  rm -f "$TMP_CRON_FIRST/crontab"
+
+  if ! env PATH="$TMP_CRON_FIRST/bin:$PATH" \
+      CRONTAB_SANDBOX="$TMP_CRON_FIRST/crontab" \
+      PROJECT_DIR="$TMP_CRON_FIRST/projeto" \
+      INTERNAL_CRON_SECRET='segredo-de-teste' \
+      NEXT_PUBLIC_APP_URL='https://crm.exemplo.test' \
+      bash -c '
+        set -euo pipefail
+        . "$1/_common.sh"
+        psql_run() { :; }
+        setup_event_log_drain_cron >/dev/null
+        setup_update_agent_cron >/dev/null
+        setup_event_log_drain_cron >/dev/null
+        setup_update_agent_cron >/dev/null
+      ' _ "$PWD"; then
+    printf '  ✗ primeira ativação ainda sai != 0 quando crontab -l não existe\n'
+    exit 1
+  fi
+
+  drain_n="$(grep -c 'event-log-drain' "$TMP_CRON_FIRST/crontab" || true)"
+  agent_n="$(grep -c 'agent.sh' "$TMP_CRON_FIRST/crontab" || true)"
+  if [ "$drain_n" != 1 ] || [ "$agent_n" != 1 ]; then
+    printf '  ✗ idempotência do cron: drain=%s agent=%s (esperava 1/1)\n' "$drain_n" "$agent_n"
+    exit 1
+  fi
+  printf '  ✓ primeira execução sai 0 e a segunda mantém exatamente 1 drain + 1 agent\n'
+
+  # A tolerância é só na LEITURA. Se `crontab -` não conseguir gravar,
+  # o erro precisa continuar chegando ao chamador.
+  if env PATH="$TMP_CRON_FIRST/bin:$PATH" \
+      CRONTAB_SANDBOX="$TMP_CRON_FIRST/crontab" CRONTAB_FAIL_WRITE=1 \
+      PROJECT_DIR="$TMP_CRON_FIRST/projeto" \
+      INTERNAL_CRON_SECRET='segredo-de-teste' \
+      NEXT_PUBLIC_APP_URL='https://crm.exemplo.test' \
+      bash -c '
+        set -euo pipefail
+        . "$1/_common.sh"
+        setup_update_agent_cron >/dev/null
+      ' _ "$PWD"; then
+    printf '  ✗ falha de escrita do crontab foi escondida\n'
+    exit 1
+  fi
+  printf '  ✓ falha de escrita continua não-zero (só ausência na leitura é tolerada)\n'
+) || fail=1
+rm -rf "$TMP_CRON_FIRST"
+
 echo
 if [ "$fail" = 0 ]; then echo "todos os validadores passaram"; else echo "FALHOU"; fi
 exit "$fail"
