@@ -31,15 +31,15 @@ import { describe, expect, it } from "vitest";
  * ── O que uma âncora precisa ter para valer ────────────────────────────────
  *
  * Asserir o literal contra ele mesmo seria decorativo. Os casos daqui cruzam
- * `IMG_NS` com as OUTRAS declarações independentes do mesmo namespace — o
- * default do compose que o cliente roda, o `.env` de exemplo que ele copia e o
- * workflow que de fato publica —, e a catraca no fim impede que a repetição
- * volte a se espalhar. Sabotado nas quatro direções, com a previsão anotada
- * antes de cada rodada:
+ * `IMG_NS` com as OUTRAS declarações independentes do mesmo namespace — os
+ * defaults dos composes, o `.env` de exemplo que o operador copia e o workflow
+ * que de fato publica —, e a catraca no fim impede que a repetição volte a se
+ * espalhar. Sabotado nas quatro direções, com a previsão anotada antes de cada
+ * rodada:
  *
- *   IMG_NS trocado só no kit          → 7 ✗  (a âncora + as 6 travessias)
+ *   IMG_NS trocado só no kit          → 9 ✗  (a âncora + as 8 travessias)
  *   IMG_NS trocado de forma COERENTE  → 1 ✗  (só a âncora — o desenho todo)
- *   uma imagem renomeada só no kit    → 3 ✗  (compose, .env e a matriz do CI)
+ *   uma imagem renomeada só no kit    → 3 ou 4 ✗  (conforme exista no Coolify)
  *   literal de volta num teste        → 1 ✗  (só a catraca)
  *
  * Roda em `verify` (check obrigatório), sem shell, sem docker.
@@ -49,6 +49,7 @@ const RAIZ = process.cwd();
 
 const COMUM = fs.readFileSync(path.join(RAIZ, "hostgator-setup-kit/_common.sh"), "utf8");
 const COMPOSE = fs.readFileSync(path.join(RAIZ, "docker-compose.prod.yml"), "utf8");
+const COMPOSE_COOLIFY = fs.readFileSync(path.join(RAIZ, "docker-compose.coolify.yml"), "utf8");
 const PUBLICA = fs.readFileSync(path.join(RAIZ, ".github/workflows/publish-image.yml"), "utf8");
 const ENV_EXEMPLO = fs.readFileSync(path.join(RAIZ, ".env.hostgator.example"), "utf8");
 
@@ -57,17 +58,17 @@ const NAMESPACE_DESTE_REPO = "ghcr.io/founders-br";
 
 /**
  * Um fork que publica as próprias imagens muda `IMG_NS` — e precisa mudar junto
- * os outros dois arquivos que não têm de onde derivar. Esta frase é a que ele lê
+ * os outros arquivos que não têm de onde derivar. Esta frase é a que ele lê
  * quando a âncora fica vermelha, para não procurar defeito onde não há: ela diz
  * o que fazer, não que ele errou.
  */
 const RECADO_AO_FORK =
-  "Publicando as próprias imagens? Troque o namespace em três lugares, e só neles: " +
-  "IMG_NS em hostgator-setup-kit/_common.sh, o default das três linhas `image:` de " +
-  "docker-compose.prod.yml, e as três *_IMAGE de .env.hostgator.example. Depois " +
-  "atualize NAMESPACE_DESTE_REPO neste arquivo. Nenhum OUTRO arquivo do repo " +
-  "repete esse valor — todos derivam de IMG_NS, e a catraca no fim deste arquivo " +
-  "existe para que continue assim.";
+  "Publicando as próprias imagens? Troque o namespace em quatro lugares, e só neles: " +
+  "IMG_NS em hostgator-setup-kit/_common.sh, os defaults das linhas `image:` de " +
+  "docker-compose.prod.yml e docker-compose.coolify.yml, e as três *_IMAGE de " +
+  ".env.hostgator.example. Depois atualize NAMESPACE_DESTE_REPO neste arquivo. " +
+  "Nenhum OUTRO arquivo do repo repete esse valor — todos derivam de IMG_NS, e " +
+  "a catraca no fim deste arquivo existe para que continue assim.";
 
 function imgNs(): string {
   const m = COMUM.match(/^IMG_NS="([^"]+)"$/m);
@@ -137,6 +138,26 @@ describe("o default do compose diz o mesmo que o kit", () => {
     it(`o piso de ${chave} no .env de exemplo usa o namespace de IMG_NS`, () => {
       const m = ENV_EXEMPLO.match(new RegExp(`^${chave}=(\\S+)`, "m"));
       expect(m, `não achei \`${chave}=\` em .env.hostgator.example`).not.toBeNull();
+      expect(m![1]).toBe(`${imgNs()}/${reposDoKit()[i]}:stable`);
+    });
+  });
+});
+
+describe("o compose do Coolify diz o mesmo que o kit", () => {
+  const CHAVES = [
+    ["APP_IMAGE", 0],
+    ["SCHEDULER_IMAGE", 2],
+  ] as const;
+
+  CHAVES.forEach(([chave, i]) => {
+    it(`o default de ${chave} no Coolify usa o namespace de IMG_NS`, () => {
+      const m = COMPOSE_COOLIFY.match(
+        new RegExp(`^\\s*image: \\$\\{${chave}:-([^}]+)\\}`, "m"),
+      );
+      expect(
+        m,
+        `não achei a linha \`image: \${${chave}:-…}\` em docker-compose.coolify.yml`,
+      ).not.toBeNull();
       expect(m![1]).toBe(`${imgNs()}/${reposDoKit()[i]}:stable`);
     });
   });
@@ -225,17 +246,19 @@ describe("o kit aponta para o que o CI realmente publica", () => {
  *
  * Sem ela, o literal volta a se espalhar — e uma âncora que convive com 30
  * cópias não é âncora, é a primeira de 31 afirmações que podem divergir.
- * A allowlist tem quatro entradas e só encolhe:
+ * A allowlist tem cinco entradas e só encolhe:
  *
- *   _common.sh               a FONTE: o literal nasce aqui
- *   docker-compose.prod.yml  YAML não deriva de shell; conferido acima
- *   .env.hostgator.example   template que o operador copia; conferido acima
- *   este arquivo             a âncora, que precisa do literal para ancorar
+ *   _common.sh                  a FONTE: o literal nasce aqui
+ *   docker-compose.prod.yml     YAML não deriva de shell; conferido acima
+ *   docker-compose.coolify.yml  YAML não deriva de shell; conferido acima
+ *   .env.hostgator.example      template que o operador copia; conferido acima
+ *   este arquivo                a âncora, que precisa do literal para ancorar
  */
 describe("catraca: ninguém mais repete o namespace", () => {
   const PERMITIDO = new Set([
     "hostgator-setup-kit/_common.sh",
     "docker-compose.prod.yml",
+    "docker-compose.coolify.yml",
     ".env.hostgator.example",
     "tests/unit/namespace-das-imagens.test.ts",
   ]);

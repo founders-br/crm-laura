@@ -17,6 +17,10 @@ chore/short-slug                # chore (deps, configs)
 docs/short-slug                 # apenas docs
 ```
 
+Neste fork, `staging` é a branch de integração e `main` é a branch de produção.
+Feature/fix/chore nasce de `staging`, volta para `staging` por PR e só depois de
+integrada e testada é promovida para `main` por outro PR.
+
 ### Commits
 
 Conventional commits + escopo `EPIC-XX`:
@@ -41,7 +45,7 @@ Ao finalizar um epic:
 
 ### PR process
 
-1. Branch a partir de `main`.
+1. Atualize `staging` e crie sua branch a partir dela.
 2. Implementar. Adicionar testes (E2E pra fluxos, unit pra lógica pura).
 3. **Definition of Done.** A lista está separada em duas por um motivo: até hoje ela misturava
    o que uma máquina reprova com o que só uma pessoa percebe, e contribuidor marcava o checklist
@@ -75,25 +79,34 @@ Ao finalizar um epic:
      da VPS edite alguma coisa na mão** — se exigir, abra issue com plano de migração em vez de PR
    - Docs atualizadas se mudou contrato (PRD/spec)
    - `pnpm test:e2e` (subset relevante) — **opcional se você contribui de fora**, ver abaixo
-4. Abrir PR contra `main`. Description deve referenciar o epic e listar evidências (logs/screenshots dos testes).
-5. **Tocou um documento de autoridade?** Corrija as afirmações de estado **daquele** documento —
+4. Abra o PR da sua branch contra `staging`. A descrição deve referenciar o epic e listar evidências
+   (logs/screenshots dos testes). Nesse PR, o gate rápido esperado é `verify`, `invariants` e
+   `imagens-ok`: a imagem é construída e testada, mas o E2E completo fica para a integração.
+5. Quando o PR entra em `staging`, o commit de integração é testado de novo. Nesse `push` rodam
+   `verify`, `invariants`, `build-and-size`, `e2e` e `imagens-ok`. Isso existe porque dois PRs podem
+   passar isoladamente e ainda assim quebrar quando combinados. O push de `staging` **não publica**
+   imagens no GHCR; ele apenas constrói e faz smoke.
+6. Depois de validar o ambiente de staging, abra um PR de `staging` para `main`. A promoção repete
+   a régua completa: `verify`, `invariants`, `build-and-size`, `e2e` e `imagens-ok`. Só esse PR leva
+   código para produção.
+7. Depois do merge em `main`, os workflows rodam novamente sobre o commit final e o pipeline de
+   imagens pode publicar o canal de `main`. Releases versionadas continuam saindo apenas por tag
+   `vX.Y.Z` através do workflow de release.
+8. **Tocou um documento de autoridade?** Corrija as afirmações de estado **daquele** documento —
    as que dizem o que está ativo, o que falta, o que aponta para onde. Não saia caçando nos
    outros: a dívida decai sozinha se ninguém a alimentar. Achados medidos, com o comando de cada
    um, em [`docs/audits/2026-08-14-afirmacoes-de-estado.md`](docs/audits/2026-08-14-afirmacoes-de-estado.md).
 
-6. CI deve passar antes de merge. Obrigatórios: `verify`, `invariants` (isolamento RLS),
-   `build-and-size`, `e2e` e `imagens-ok`.
+O `imagens-ok` (em `.github/workflows/publish-image.yml`) constrói as três imagens que o
+self-hoster instala e faz smoke do app. Em PR e em `staging` ele é gate de construção; não
+publica artefato. A publicação fica restrita à `main` e às tags de release.
 
-   O `imagens-ok` (em `.github/workflows/publish-image.yml`) constrói as três imagens que o
-   self-hoster instala, roda em PR e **bloqueia** desde 2026-08-13.
+Verde no `e2e` **não** é "jornada provada": ele mesmo imprime, no resumo, quais specs não
+cobriu — e `vps-fresh-onboarding` continua fora por depender de serviços externos.
 
-   Verde no `e2e` **não** é "jornada provada": ele mesmo imprime, no resumo, quais specs não
-   cobriu — e a que fica de fora é justamente `vps-fresh-onboarding`, a instalação do zero.
-
-   > Esta lista dizia "três obrigatórios" e chamava o `e2e` de não-bloqueante. Estava
-   > desatualizada nos dois pontos, e quem a usasse como régua mediria contra a régua errada.
-   > Confira na fonte antes de confiar em qualquer lista escrita:
-   > `gh api repos/melgarafael/DeskcommCRM/branches/main/protection --jq '.required_status_checks.contexts'`
+> Workflow verde só bloqueia merge se a branch estiver protegida. Neste fork, os rulesets de
+> `staging` e `main` devem exigir os checks descritos acima e PR obrigatório; sem proteção, o
+> GitHub permite push/merge direto mesmo com todo esse CI existente.
 
 ### Pegando uma issue — o protocolo
 
@@ -127,8 +140,9 @@ Duas coisas vão parecer erro seu e não são:
 personalizações suas — e ele quase sempre tem, porque é dele que a sua VPS puxa —, o PR propõe
 essas personalizações ao produto inteiro. Isso não gera conflito e não acende gate nenhum: elas
 entram em silêncio para todas as instalações. Foi medido (PR #465): sete arquivos com a marca de um
-cliente, seis deles mergeando sem um único conflito. O caminho é `git checkout -b fix/o-que-voce-conserta`
-a partir da `main` **deste** repositório, com só o seu conserto dentro.
+cliente, seis deles mergeando sem um único conflito. O caminho neste fork é
+`git checkout -b fix/o-que-voce-conserta origin/staging`, com só o seu conserto dentro, e abrir o PR
+contra `staging`.
 
 **A marca da sua instalação não se troca editando código.** Não altere `DEFAULT_APP_NAME` em
 `lib/branding.ts`, nem os títulos em `app/`. O banco manda (`platform_branding`,
