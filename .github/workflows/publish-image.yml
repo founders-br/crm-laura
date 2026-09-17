@@ -14,7 +14,7 @@ name: Publicar imagem Docker (GHCR)
 on:
   push:
     tags: ["v*"]
-    branches: ["main"]
+    branches: ["main", "staging"]
   # NÃO acrescente `release: types: [published]` aqui. Ele já esteve, e o efeito
   # foi medido na v1.3.0: `gh release create` empurra a tag E publica a release,
   # então o MESMO commit foi construído DUAS vezes, com 5 minutos de diferença.
@@ -43,6 +43,10 @@ on:
   # dentro da imagem não enxerga `tests/` (`.dockerignore`), e a partir do
   # next 16.3 ele typecheca os `*.test.ts` colocados. O artefato que o
   # self-hoster instala era o único sem gate.
+  #
+  # Push em `staging` também CONSTRÓI e faz smoke das imagens para validar o
+  # commit de integração, mas não publica tag nenhuma no GHCR. Publicação de
+  # branch continua exclusiva da `main`; releases continuam exclusivas das tags.
   pull_request:
   workflow_dispatch: {}
 
@@ -122,7 +126,9 @@ jobs:
       - uses: actions/checkout@v7
 
       - name: Log in to GHCR
-        if: github.event_name != 'pull_request'
+        # `staging` é validação do commit integrado, não canal de distribuição.
+        # Ela constrói e faz smoke abaixo, mas nunca recebe credencial de push.
+        if: github.event_name != 'pull_request' && github.ref_name != 'staging'
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -191,10 +197,9 @@ jobs:
           file: ${{ matrix.dockerfile }}
           # linux/amd64: o VPS HostGator e a imagem do WAHA são amd64.
           platforms: linux/amd64
-          # PR de fork não tem permissão de escrita no GHCR, e publicar imagem
-          # de código não revisado seria pior que não gatear. Em PR: constrói
-          # (que é o gate) e descarta.
-          push: ${{ github.event_name != 'pull_request' }}
+          # PR e `staging` são gate: constroem e descartam. `main`, tag e
+          # dispatch fora de staging preservam o comportamento de publicação.
+          push: ${{ github.event_name != 'pull_request' && github.ref_name != 'staging' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
